@@ -1,8 +1,8 @@
 clearvars
 close all
 clc
-run('include.m');
-%run('../include.m');
+%run('include.m');
+run('../include.m');
 
 [X, Y] = meshgrid(-2:.1:2);
 R = X.^2 + Y.^2;
@@ -34,9 +34,9 @@ layers.score.prec = {'output', 'gt'};
 network = scaffold(layers, 'maxIter', 3000, 'alpha', 0.1);
 
 network.init();
-
+tic
 network.train();
-
+toc
 network.test();
 
 theta = network.theta();
@@ -47,6 +47,7 @@ layers = rmfield(layers, 'score');
 network2 = scaffold(layers);
 network2.set_theta(theta);
 R2 = network2.forward();
+R2 = R2.output;
 
 subplot(1,2,1);
 mesh(X, Y, R);

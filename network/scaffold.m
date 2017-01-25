@@ -1,27 +1,32 @@
-function [ network ] = scaffold( layers_, varargin )
+function [ network_ ] = scaffold( layers_, varargin )
 %SCAFFOLD Scaffold the network and initial the callbacks.
 %   network callbacks summary
 %       init()
 %       train()
 %       test()
 %       theta()
+%       forward()
 %   en-closure variables summary
+%       options_
 %       layers_
 %       layers_names_
 %       graph_
 %       theta_
+%       network_
 
 
 %--- default
-options.maxIter = 100;
-options.alpha = 1;
+options_.optimizor = @batchbackpropogation;
+options_.maxIter = 100;
+options_.alpha = 1;
+options_.energy = {};
 
 %--- fill with configured option
 options_in = struct(varargin{:});
 f_list = fieldnames(options_in);
 for i=1:length(f_list)
     f = f_list{i};
-    options.(f) = options_in.(f);
+    options_.(f) = options_in.(f);
 end
 
 layers_names_ = fieldnames(layers_);
@@ -81,96 +86,18 @@ function init(override)
         end
     end
 end
-network.init = @init;
+network_.init = @init;
 
-% train callback
+% forward callback
 %
-function train()
-    for iter_idx = 1:options.maxIter
-        state = struct();
-
-        % forward pass
-        for train_layer_idx = order_
-            theta = theta_.(layers_names_{train_layer_idx});
-            depends = sum(graph_(:, train_layer_idx));
-            if depends == 0
-                x = [];
-            elseif depends == 1
-                x = state(graph_(:, train_layer_idx)).y;
-            else
-                x = cell(1, depends);
-                for dep_idx = 1:depends
-                    x{dep_idx} = state(strcmp(layers_.(layers_names_{train_layer_idx}).prec{dep_idx}, layers_names_)).y;
-                end
-            end
-
-            y = layers_.(layers_names_{train_layer_idx}).layer.forward(theta, x);
-
-            state(train_layer_idx).y = y;
-            state(train_layer_idx).dy = 0;%zeros(size(y));
-        end
-
-        % score
-        logi(['Iter ' num2str(iter_idx) ': ' layers_names_{order_(end)} '=' num2str(state(order_(end)).y)]);
-
-        % backward pass
-        for train_layer_idx = order_(numel(order_):-1:1)
-            if isfield(layers_.(layers_names_{train_layer_idx}).layer, 'backward')
-                theta = theta_.(layers_names_{train_layer_idx});
-                dy = state(train_layer_idx).dy;
-                depends = sum(graph_(:, train_layer_idx));
-                if depends == 0
-                    x = [];
-                elseif depends == 1
-                    x = state(graph_(:, train_layer_idx)).y;
-                else
-                    x = cell(1, depends);
-                    for dep_idx = 1:depends
-                        x{dep_idx} = state(strcmp(layers_.(layers_names_{train_layer_idx}).prec{dep_idx}, layers_names_)).y;
-                    end
-                end
-                y = state(train_layer_idx).y;
-
-                if nargout(layers_.(layers_names_{train_layer_idx}).layer.backward) == 2
-                    [dw, dx] = layers_.(layers_names_{train_layer_idx}).layer.backward(theta, dy, x, y);
-                    state(train_layer_idx).dw = dw;
-                else
-                    dx = layers_.(layers_names_{train_layer_idx}).layer.backward(theta, dy, x, y);
-                end
-
-                depends = sum(graph_(:, train_layer_idx));
-                if depends == 0
-                    % pass
-                elseif depends == 1
-                    depend_idx = find(graph_(:, train_layer_idx));
-                    state(depend_idx).dy ...
-                        = state(depend_idx).dy ...
-                        + dx;
-                else
-                    for dx_idx = 1:depends
-                        depend_idx = strcmp(layers_.(layers_names_{train_layer_idx}).prec{dx_idx}, layers_names_);
-                        state(depend_idx).dy ...
-                            = state(depend_idx).dy ...
-                            + dx{dx_idx};
-                    end
-                end
-            end
-        end
-
-        % update
-        for train_update_idx = order_
-            theta_.(layers_names_{train_update_idx}) ...
-                = theta_.(layers_names_{train_update_idx}) ...
-                - options.alpha * state(train_update_idx).dw;
-        end
+function [energy, state] = forward(thetas)
+    if nargin < 1
+        thetas = theta_;
     end
-end
-network.train = @train;
-
-function out = forward()
     state = struct();
+    % forward pass
     for train_layer_idx = order_
-        theta = theta_.(layers_names_{train_layer_idx});
+        theta = thetas.(layers_names_{train_layer_idx});
         depends = sum(graph_(:, train_layer_idx));
         if depends == 0
             x = [];
@@ -186,24 +113,90 @@ function out = forward()
         y = layers_.(layers_names_{train_layer_idx}).layer.forward(theta, x);
 
         state(train_layer_idx).y = y;
+        state(train_layer_idx).dy = 0;%zeros(size(y));
     end
-    out = state(order_(end)).y;
+    if isempty(options_.energy)
+        energy.(layers_names_{order_(end)}) = state(order_(end)).y;
+    else
+        for energy_idx = 1:numel(options_.energy)
+            energy.(options_.energy{energy_idx}) = state(strcmp(options_.energy{energy_idx}, layers_names_)).y;
+        end
+    end
 end
-network.forward = @forward;
+network_.forward = @forward;
+
+% backward callback
+%
+function [state] = backward(state, thetas)
+    if nargin < 2
+        thetas = theta_;
+    end
+    % backward pass
+    for train_layer_idx = order_(numel(order_):-1:1)
+        if isfield(layers_.(layers_names_{train_layer_idx}).layer, 'backward')
+            theta = thetas.(layers_names_{train_layer_idx});
+            dy = state(train_layer_idx).dy;
+            depends = sum(graph_(:, train_layer_idx));
+            if depends == 0
+                x = [];
+            elseif depends == 1
+                x = state(graph_(:, train_layer_idx)).y;
+            else
+                x = cell(1, depends);
+                for dep_idx = 1:depends
+                    x{dep_idx} = state(strcmp(layers_.(layers_names_{train_layer_idx}).prec{dep_idx}, layers_names_)).y;
+                end
+            end
+            y = state(train_layer_idx).y;
+
+            if nargout(layers_.(layers_names_{train_layer_idx}).layer.backward) == 2
+                [dw, dx] = layers_.(layers_names_{train_layer_idx}).layer.backward(theta, dy, x, y);
+                state(train_layer_idx).dw = dw;
+            else
+                dx = layers_.(layers_names_{train_layer_idx}).layer.backward(theta, dy, x, y);
+            end
+
+            depends = sum(graph_(:, train_layer_idx));
+            if depends == 0
+                % pass
+            elseif depends == 1
+                depend_idx = find(graph_(:, train_layer_idx));
+                state(depend_idx).dy ...
+                    = state(depend_idx).dy ...
+                    + dx;
+            else
+                for dx_idx = 1:depends
+                    depend_idx = strcmp(layers_.(layers_names_{train_layer_idx}).prec{dx_idx}, layers_names_);
+                    state(depend_idx).dy ...
+                        = state(depend_idx).dy ...
+                        + dx{dx_idx};
+                end
+            end
+        end
+    end
+end
+network_.backward = @backward;
+
+% train callback
+%
+function train()
+    theta_ = options_.optimizor( network_, layers_names_, order_, theta_, options_ );
+end
+network_.train = @train;
 
 % test callback
 %
 function test()
     % TODO
 end
-network.test = @test;
+network_.test = @test;
 
 % theta callback
 %
 function theta = get_theta()
     theta = theta_;
 end
-network.theta = @get_theta;
+network_.theta = @get_theta;
 
 % set_theta callback
 %   only the layers share the same name in both
@@ -217,5 +210,5 @@ function set_theta(theta)
         end
     end
 end
-network.set_theta = @set_theta;
+network_.set_theta = @set_theta;
 end

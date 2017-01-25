@@ -12,8 +12,10 @@ function [ cost ] = forward(~, inputs)
     y = inputs{2};
     
     z = bsxfun(@minus, z, max(z,[],1));
+    z(z > 709) = 709; % prevent overflow
     ez = exp(z);
     h = bsxfun(@rdivide, ez, sum(ez));
+    h(h == 0) = eps;
     
     cost = -sum(sum(y .* log(h))) ./ size(y, 2);
 end
